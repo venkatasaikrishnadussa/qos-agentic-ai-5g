@@ -223,16 +223,182 @@ This is meant to be scraped by Prometheus; you can still inspect it via `curl` f
 
 ---
 
-## Next Steps / Extension Points
+## Agentic Decision Loop – How to Test
 
-The current API is ready for testing PCF interactions and observing basic metrics.  
-To evolve this into the full agentic platform described in the spec, you would:
+The LangGraph-based agent lives under `app/agents/` and is exposed via the `/agent/*` endpoints.
 
-- Implement the LangGraph StateGraph and nodes under `app/agents/`.
-- Connect the telemetry simulator (`app/telemetry/simulator.py`) and ML predictor (`app/models/ml_predictor.py`) into the closed loop (`app/runtime/loop.py`).
-- Add FastAPI endpoints to:
-  - Accept operator intents (e.g. `"Maintain enterprise SLA at 99.9% while maximizing utilization."`),
-  - Trigger or inspect agent runs and decisions.
+The closed loop it implements is:
 
-The REST surface and schemas here are designed to be stable while those internals evolve.
+1. **Observe**: read a telemetry snapshot from `telemetry_stream`.
+2. **Predict**: estimate congestion risk with the congestion predictor.
+3. **Generate**: propose multiple candidate slice allocation policies.
+4. **Simulate**: evaluate each candidate with the policy simulation engine.
+5. **Decide**: pick the best safe policy based on SLA + utilization + operator intent.
+6. **Enforce**: push the selected policy to the PCF mock.
+7. **Reward**: compute a scalar reward and update Prometheus metrics.
 
+### 5. `POST /agent/intent` – Set Operator Intent
+
+**Description:**  
+Registers a high-level operator objective that guides the agent’s decisions.
+
+**Sample request:**
+
+```bash
+curl -X POST "http://localhost:8000/agent/intent" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intent": "Maintain enterprise SLA at 99.9% while maximizing utilization"
+  }'
+```
+
+**Sample response:**
+
+```json
+{
+  "intent": {
+    "intent_text": "Maintain enterprise SLA at 99.9% while maximizing utilization",
+    "target_sla_percent": 99.9,
+    "maximize_metric": "utilization",
+    "created_at": "2026-03-04T10:20:30.123456"
+  }
+}
+```
+
+### 6. `POST /agent/run` – Single Decision Cycle
+
+**Description:**  
+Runs one full agentic decision loop (observe → reason → simulate → decide → enforce → reward).
+
+**Sample request:**
+
+```bash
+curl -X POST "http://localhost:8000/agent/run"
+```
+
+**Sample response (shape):**
+
+```json
+{
+  "decision": {
+    "action_id": "increase-embb",
+    "description": "Increase eMBB bandwidth to relieve congestion",
+    "target_slice": "eMBB",
+    "new_allocation_percent": 55.0
+  },
+  "reward": 42.3,
+  "telemetry": {
+    "...": "telemetry snapshot used for this decision"
+  },
+  "iteration": 1
+}
+```
+
+### 7. `POST /agent/start` – Start Continuous Closed Loop
+
+**Description:**  
+Starts a background loop that continuously runs the agent every few seconds.
+
+**Sample request:**
+
+```bash
+curl -X POST "http://localhost:8000/agent/start"
+```
+
+**Sample response:**
+
+```json
+{ "status": "running" }
+```
+
+You can then periodically inspect decisions and metrics while the loop runs.
+
+### 8. `POST /agent/stop` – Stop Continuous Loop
+
+**Description:**  
+Stops the background agent loop.
+
+**Sample request:**
+
+```bash
+curl -X POST "http://localhost:8000/agent/stop"
+```
+
+**Sample response:**
+
+```json
+{ "status": "stopped" }
+```
+
+### 9. `GET /agent/decision` – Inspect Last Decision
+
+**Description:**  
+Returns a detailed view of the most recent agent decision, including telemetry, candidate outcomes, and reward.
+
+**Sample request:**
+
+```bash
+curl -X GET "http://localhost:8000/agent/decision"
+```
+
+**Sample response (shape):**
+
+```json
+{
+  "iteration": 3,
+  "telemetry": { "...": "latest telemetry snapshot" },
+  "selected_action": {
+    "action_id": "increase-embb",
+    "description": "Increase eMBB bandwidth to relieve congestion",
+    "target_slice": "eMBB",
+    "new_allocation_percent": 55.0
+  },
+  "reward": 38.7,
+  "simulated_outcomes": [
+    {
+      "action": { "...": "candidate policy 1" },
+      "metrics": {
+        "predicted_latency_ms": 3.2,
+        "predicted_utilization_percent": 82.0,
+        "sla_violated": false,
+        "reward_score": 82.0
+      }
+    },
+    {
+      "action": { "...": "candidate policy 2" },
+      "metrics": { "...": "another simulated outcome" }
+    }
+  ],
+  "predicted_congestion": {
+    "probability": 0.74,
+    "source": "mock-logistic-regression"
+  },
+  "operator_intent": {
+    "intent_text": "Maintain enterprise SLA at 99.9% while maximizing utilization",
+    "target_sla_percent": 99.9,
+    "maximize_metric": "utilization",
+    "created_at": "2026-03-04T10:20:30.123456"
+  }
+}
+```
+
+### 10. Agentic Metrics in Prometheus
+
+After running the agent (via `/agent/run` or `/agent/start`), you can inspect agent-specific metrics:
+
+```bash
+curl -X GET "http://localhost:8000/metrics" | grep -E "agent_|decision_latency_seconds|sla_violations_total"
+```
+
+You should see counters and histograms such as:
+
+```text
+agent_runs_total 3
+agent_decisions_total 3
+agent_rewards_bucket{le="0"} 0
+...
+decision_latency_seconds_count 3
+sla_violations_total 0
+```
+
+These metrics describe how often the agent runs, how often it produces a decision, the distribution of rewards, and any SLA violations detected during simulation.

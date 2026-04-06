@@ -49,18 +49,49 @@ def apply_action_to_allocations(
 ) -> List[SliceAllocation]:
     """
     Return a new allocations list reflecting the proposed action.
+
+    The target slice is set to the requested value, and all non-target slices
+    are proportionally rescaled so the total remains exactly 100%.
     """
+    target_value = float(action.new_allocation_percent)
+
+    non_target = [a for a in allocations if a.slice_type != action.target_slice]
+    non_target_total = sum(a.bandwidth_percent for a in non_target)
+    remaining_total = max(0.0, 100.0 - target_value)
+
     updated: List[SliceAllocation] = []
     for alloc in allocations:
         if alloc.slice_type == action.target_slice:
             updated.append(
                 SliceAllocation(
                     slice_type=alloc.slice_type,
-                    bandwidth_percent=action.new_allocation_percent,
+                    bandwidth_percent=target_value,
                 )
             )
+            continue
+
+        if non_target_total <= 1e-9:
+            new_percent = remaining_total / max(len(non_target), 1)
         else:
-            updated.append(alloc)
+            new_percent = (alloc.bandwidth_percent / non_target_total) * remaining_total
+
+        updated.append(
+            SliceAllocation(
+                slice_type=alloc.slice_type,
+                bandwidth_percent=new_percent,
+            )
+        )
+
+    # Correct tiny floating-point drift so total is exactly 100%.
+    total = sum(a.bandwidth_percent for a in updated)
+    drift = 100.0 - total
+    if abs(drift) > 1e-9 and updated:
+        first = updated[0]
+        updated[0] = SliceAllocation(
+            slice_type=first.slice_type,
+            bandwidth_percent=first.bandwidth_percent + drift,
+        )
+
     return updated
 
 

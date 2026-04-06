@@ -20,6 +20,21 @@ policies_applied_total = Counter(
     "Total number of policies successfully applied to PCF",
     registry=registry,
 )
+agent_runs_total = Counter(
+    "agent_runs_total",
+    "Total number of agent reasoning cycles executed",
+    registry=registry,
+)
+agent_decisions_total = Counter(
+    "agent_decisions_total",
+    "Total number of agent cycles that produced a concrete policy decision",
+    registry=registry,
+)
+agent_rewards = Histogram(
+    "agent_rewards",
+    "Distribution of agent reward scores",
+    registry=registry,
+)
 
 metrics_router = APIRouter()
 

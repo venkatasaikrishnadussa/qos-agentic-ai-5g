@@ -22,6 +22,11 @@ class Settings(BaseModel):
     pcf_base_url: str = Field(
         default="http://localhost:8000", validation_alias="PCF_BASE_URL"
     )
+    # internal = call PCF logic in-process (reliable for same FastAPI process).
+    # http = POST to PCF_BASE_URL (for split deployments / integration tests).
+    pcf_enforcement_mode: Literal["internal", "http"] = Field(
+        default="internal", validation_alias="PCF_ENFORCEMENT_MODE"
+    )
 
     model_config = {"extra": "ignore"}
 

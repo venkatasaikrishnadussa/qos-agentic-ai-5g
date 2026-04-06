@@ -19,10 +19,13 @@ logger = get_logger(__name__)
 _POLICY_STORE: list[StoredPolicy] = []
 
 
-@router.post("/policy/update", response_model=PolicyUpdateResponse)
-async def update_policy(request: PolicyUpdateRequest) -> PolicyUpdateResponse:
+async def apply_policy_update(request: PolicyUpdateRequest) -> PolicyUpdateResponse:
     """
-    Mock PCF endpoint that stores the applied policy and logs enforcement.
+    Core PCF enforcement: persist policy, metrics, structured log.
+
+    Used by the REST route and by the agent client in ``internal`` mode so
+    enforcement does not depend on HTTP loopback (avoids ConnectError in
+    background tasks when the server URL/port does not match).
     """
     applied_at = datetime.now(timezone.utc).isoformat()
 
@@ -46,6 +49,14 @@ async def update_policy(request: PolicyUpdateRequest) -> PolicyUpdateResponse:
         reason=None,
         applied_action=request.action,
     )
+
+
+@router.post("/policy/update", response_model=PolicyUpdateResponse)
+async def update_policy(request: PolicyUpdateRequest) -> PolicyUpdateResponse:
+    """
+    Mock PCF endpoint that stores the applied policy and logs enforcement.
+    """
+    return await apply_policy_update(request)
 
 
 @router.get("/policy", response_model=List[StoredPolicy])
